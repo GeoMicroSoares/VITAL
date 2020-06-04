@@ -1,0 +1,222 @@
+---
+title: "VITAL - 1000 Genomes - Data Analysis"
+author: "André Soares"
+date: "02/05/2020"
+output: 
+  html_document:
+    theme: paper
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+library(readxl)
+library(dplyr)
+library(data.table)
+library(UpSetR)
+library(tidyverse)
+```
+
+```{r warning=FALSE, include=FALSE}
+#list all VITAL folders
+vital_dir = list.files("C:/Users/massa/Desktop/VITAL/DATA/WES Analysis/",
+           pattern= "VITAL",
+           full.names = T, include.dirs = T)
+
+#extract only 1000 Genomes tables
+for (i in vital_dir){
+  tmp=list.files(i, 
+             pattern = "1000",
+             full.names = T)
+  
+  tmp_name = sapply(strsplit(i, "/"), tail, 1)
+  #import ClinVar tables
+  #name each with sample name
+  for (a in tmp_name){
+    df=read_excel(tmp)
+    df$Sample=as.character(tmp_name)
+    #call it by its right name
+    assign(tmp_name, df)
+    #keep a first row for the merge later
+    if (a == "VITAL1"){
+      first_row=head(df,1)
+    }
+    #clean up
+    rm(df)
+  }
+}
+
+#create master df
+mVITAL=rbind(VITAL1,VITAL2,VITAL3,VITAL4,VITAL5,
+              VITAL6,VITAL7,VITAL8,VITAL9,VITAL10,
+              VITAL11,VITAL12,VITAL14,VITAL15,
+              VITAL16,VITAL17,VITAL18,VITAL19,VITAL20,
+              VITAL21,VITAL22,VITAL23,VITAL24,VITAL25,
+              VITAL26,VITAL27,VITAL28,VITAL29)
+```
+
+```{r warning=FALSE, include=FALSE}
+#turn Sample column into a binary matrix, keeping Phenotype and Gender
+#retrieve frequency table
+freq_smVITAL= mVITAL %>% 
+  count(Sample, `Homo sapiens (hg38) _Gene`) %>%
+  spread(Sample, n, fill=0)
+
+#retrieve contingency table
+abs_smVITAL= mVITAL %>% 
+  count(Sample, `Homo sapiens (hg38) _Gene`) %>%
+  spread(Sample, n, fill=0) %>%
+  mutate_if(is.numeric, ~1 * (. > 0)) %>% 
+  as.data.frame()
+
+#turn new columns into integers (UpsetR-specific)
+for(i in 2:ncol(abs_smVITAL)){
+  abs_smVITAL[ , i] <- as.integer(abs_smVITAL[ , i]) 
+}
+
+#add metadata to master df
+md=read_excel("C:/Users/massa/Desktop/VITAL/LVNC Samples Inventory_simplified.xlsx",
+              sheet="Folha3")
+mVITAL$Phenotype=md$Phenotype[match(mVITAL$Sample, md$`Project Code`)]
+mVITAL$Gender=md$Gender[match(mVITAL$Sample, md$`Project Code`)]
+```
+
+```{r fig.width=10, include=FALSE}
+#plot upsetr plot with metadata, save to image
+# png("vital_upsetr.png", 
+#     width = 3500, height = 2000,
+#     res = 300)
+
+upset(abs_smVITAL, nsets = 28, 
+      order.by = "freq",
+      nintersects = 200,
+      set.metadata = list(data = md, 
+                          plots = list(
+                            list(
+                              type = "matrix_rows", 
+                              column = "Phenotype", 
+                              assign = 10, 
+                              colors = c(LVNC = "green", 
+                                         Control = "navy",
+                                         `LVNC/HCM` = "purple")),
+                            list(
+                              type = "heat",
+                              column = "Gender",
+                              assign = 10,
+                              colors = c(M = "red",
+                                         F = "yellow")
+                            )
+                          )),
+      mb.ratio = c(.35, .65),
+      )
+# # 3. Close the file
+# dev.off()
+```
+
+## Filtered data analysis
+
+ - Creating an `UpSetR` plot to analyse any genes with 1 or more alleles (binary table) that are unique to a sample or shared between two or more.
+
+ - Filtering out any alleles occurring in controls AND patients.
+
+ - Removing alleles from from patient samples that appear in controls
+ 
+ - Using column `Homo sapiens (hg38) _Gene`
+
+ - Total number of altered genes excluding those present in controls:
+```{r echo=FALSE}
+#get vector list of `CLNDISDB clinvar_20191118.vcf` entries associated to Controls
+ctrl_sv = mVITAL$`Homo sapiens (hg38) _Gene`[mVITAL$Phenotype == "Control"]
+#remove rows 
+f_mVITAL <- filter(mVITAL, !`Homo sapiens (hg38) _Gene` %in% ctrl_sv)
+
+f_abs_smVITAL= f_mVITAL %>% 
+  count(Sample, `Homo sapiens (hg38) _Gene`) %>%
+  spread(Sample, n, fill=0) %>%
+  mutate_if(is.numeric, ~1 * (. > 0)) %>% 
+  as.data.frame()
+
+f_freq_smVITAL= f_mVITAL %>% 
+  count(Sample, `Homo sapiens (hg38) _Gene`) %>%
+  spread(Sample, n, fill=0)
+
+#unique genes NOT in controls, shared only by LVNC and LVNC/HCM
+length(unique(f_mVITAL$`Homo sapiens (hg38) _Gene`))
+
+#turn new columns into integers (UpsetR-specific)
+for(i in 2:ncol(f_abs_smVITAL)){
+  f_abs_smVITAL[ , i] <- as.integer(f_abs_smVITAL[ , i]) 
+}
+```
+
+```{r echo=FALSE, fig.height=4, fig.width=7}
+# png("f_vital_upsetr.png", 
+#     width = 3500, height = 2000,
+#     res = 300)
+
+upset(f_abs_smVITAL, nsets = 28, 
+      order.by = "freq",
+      #43 found for > 1 intersection 
+      nintersects = 43,
+      set.metadata = list(data = md, 
+                          plots = list(
+                            list(
+                              type = "matrix_rows", 
+                              column = "Phenotype", 
+                              assign = 10, 
+                              colors = c(LVNC = "green", 
+                                         `LVNC/HCM` = "purple")),
+                            list(
+                              type = "heat",
+                              column = "Gender",
+                              assign = 10,
+                              colors = c(M = "red",
+                                         F = "yellow")
+                            )
+                          )),
+      mb.ratio = c(.35, .65),
+      )
+# # 3. Close the file
+# dev.off()
+```
+
+ - Rows are samples (green for LVNC, purple for LVNC/HCM). Total number of altered genes per sample is plotted on the left vertical barchart.
+
+ - Columns depict "interactions", i.e. altered genes unique to a sample or groups of genes shared by 2 or more samples. This is reflected on the vertical barchart on top.
+ 
+ - Heatmap on the left illustrates the gender of patients.
+
+### List of genes shared by more than one patient (control-removed):
+
+Total number of genes in more than one sample:
+```{r echo=FALSE}
+f_abs_smVITAL_2 = as.data.frame(f_abs_smVITAL)
+f_abs_smVITAL_2[2:16] <- lapply(f_abs_smVITAL_2[2:16], as.numeric)
+f_abs_smVITAL_2$`Homo sapiens (hg38) _Gene`[is.na(f_abs_smVITAL_2$`Homo sapiens (hg38) _Gene`)] <- "no ID"
+rownames(f_abs_smVITAL_2) <- f_abs_smVITAL_2[,1]
+f_abs_smVITAL_2[,1] <- NULL
+
+two_or_more_spl_list_f_abs_smVITAL = row.names(f_abs_smVITAL_2[rowSums(f_abs_smVITAL_2) > 1,])
+
+two_or_more_spl_f_freq_smVITAL = filter(f_freq_smVITAL,
+       `Homo sapiens (hg38) _Gene` %in% two_or_more_spl_list_f_abs_smVITAL)
+length(two_or_more_spl_f_freq_smVITAL$`Homo sapiens (hg38) _Gene`)
+```
+
+Here's all of them!
+
+```{r echo=FALSE, comment=NA}
+print(unique(two_or_more_spl_f_freq_smVITAL$`Homo sapiens (hg38) _Gene`),
+      row.names = FALSE, quote = F)
+```
+
+Table of variants per gene and per sample:
+
+```{r}
+library(kableExtra)
+two_or_more_spl_f_freq_smVITAL %>%
+  rename(Gene = `Homo sapiens (hg38) _Gene`) %>% 
+  kable() %>% 
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"),
+                full_width = F)
+```
